@@ -1,2 +1,2 @@
-# astro_cpd
-Detecting change points in galaxy data
+# astro_cpd_distri
+Detecting change points in distributional galaxy data
