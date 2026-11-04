@@ -5,7 +5,9 @@ import statistics
 import pandas as pd
 
 def omega_hat_dist(data):
-    # data_adj = data.iloc[:, 1:]
+    """
+    Penalty term for initial change point screening
+    """
     data_adj_pre = data.iloc[:, :-1]
     data_adj_post = data.iloc[:, 1:]
     omega_cands = []
