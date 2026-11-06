@@ -32,7 +32,7 @@ scores, components = fpca(df_array_fluxes, num_components)
 # df_all = pd.concat([df_array[['Assigned_Redshift']], scores_df], axis=1)
 # df_all.to_csv(constructed_file, index = False)
 
-# wavelet basis
+# Wavelet basis
 def matrix_empirical_wavelet_transform_fixed(matrix_data, num_modes=3):
     """
     Vectorized Empirical Wavelet Transform for an N x D matrix.
@@ -55,8 +55,7 @@ def matrix_empirical_wavelet_transform_fixed(matrix_data, num_modes=3):
         segment = mean_magnitude_spectrum[peaks[i]:peaks[i+1]]
         valley_idx = peaks[i] + np.argmin(segment)
         valleys.append(valley_idx)
-    
-    # --- FIXED & BULLETPROOF BOUNDARY LOGIC ---
+
     # To get exactly 'num_modes' bands, we need exactly 'num_modes - 1' internal cuts.
     if len(valleys) == num_modes - 1:
         # Perfect match: use the naturally found valleys
