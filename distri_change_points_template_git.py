@@ -208,13 +208,13 @@ class MeanShiftChangePointDetectorDist:
         
         # Bound slices and compute the target segment mean
         segment_matrix = Y_data.iloc[first_match_index:last_match_index + 1, 1:].to_numpy() # Ensured last row is included if needed
-        mean_seg_np = np.mean(segment_matrix, axis=0).reshape(1, 2)
+        mean_seg_np = np.mean(segment_matrix, axis=0).reshape(1, segment_matrix.shape[1])
 
         swd_distances_all = 0
         for i in range(num_z):
             if unique_z[i] >= start_z and unique_z[i] <= end_z:
                 # Pull precomputed mean for this specific redshift directly out of a numpy array
-                select_mean_seg_np = precomputed_means[i].reshape(1, 2)
+                select_mean_seg_np = precomputed_means[i].reshape(1, segment_matrix.shape[1])
                 
                 # Vectorized SWD calculation
                 swd_distances = swd_vectorized(select_mean_seg_np, mean_seg_np, n_projections, p=1, seed=seed)

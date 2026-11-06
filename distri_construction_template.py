@@ -100,7 +100,7 @@ def matrix_empirical_wavelet_transform_fixed(matrix_data, num_modes=3):
 def calculate_mode_energy_capture(original_matrix, empirical_modes):
     """
     Computes the percentage of total dataset energy/variance 
-    captured by taking the ratio of the squared L2 norms between each mode
+    captured by taking the ratio of the squared Frobenius norms between each mode
     and the original matrix.
     
     Parameters:
