@@ -68,45 +68,6 @@ def swd_vectorized(matrix1, matrix2, n_projections=100, p=1, seed=None):
     
     return swd
 
-def swd_vectorized_rows(segment_matrix, mean_seg, n_projections=100, seed=None):
-    """
-    Computes the sum of squared SWD between each individual row in segment_matrix 
-    and the mean vector mean_seg, completely bypassing row-by-row iteration.
-    """
-    if seed is not None:
-        np.random.seed(seed)
-        
-    n_samples, n_features = segment_matrix.shape
-    
-    # 1. Generate projections ONCE for the entire segment calculation
-    projections = np.random.normal(0, 1, (n_projections, n_features))
-    projections /= np.linalg.norm(projections, axis=1, keepdims=True)
-    
-    # 2. Project everything to 1D simultaneously using matrix multiplication
-    # segment_projections shape: (n_samples, n_projections)
-    # mean_projections shape: (n_projections,)
-    segment_projections = np.dot(segment_matrix, projections.T)
-    mean_projections = np.dot(mean_seg, projections.T)
-    
-    # 3. Compute 1D Wasserstein distances efficiently
-    # For a 1D single-point distribution vs. another 1D single point, 
-    # the Wasserstein distance simplifies to the absolute difference: |x - y|
-    # swd_per_row will hold the SWD value for each row in the segment
-    swd_per_row = np.zeros(n_samples)
-    
-    for j in range(n_projections):
-        v_mean = mean_projections[j]  # Scalar value of the mean projection
-        
-        # Calculate 1D Wasserstein distance for each row's projection against the mean projection
-        # Because x_sliced is a single scalar point for each sample, stats.wasserstein_distance 
-        # reduces down to an element-wise absolute difference.
-        swd_per_row += np.abs(segment_projections[:, j] - v_mean)
-        
-    # Average across all projection slices
-    swd_per_row /= n_projections
-    
-    return swd_per_row
-
 class MeanShiftChangePointDetectorDist:
     """
     Multiple Change Point Detector for High-Dimensional Mean Shift Models
@@ -154,14 +115,20 @@ class MeanShiftChangePointDetectorDist:
             tau_mat = unique_z[:tau]
             matched_rows = Y_window['Assigned_Redshift'].isin(tau_mat).sum()
             # Segment 1 mean & SSE
-            sum_left = cum_sum[matched_rows]
-            mean_left = sum_left / matched_rows
+            # sum_left = cum_sum[matched_rows]
+            # mean_left = sum_left / matched_rows
+
+            # Segment 1
+            matrix_left = Y_window.iloc[:matched_rows, :]
 
             # Segment 2 mean & SSE
-            sum_right = cum_sum[w_len] - cum_sum[matched_rows]
-            mean_right = sum_right / (w_len - matched_rows)
+            # sum_right = cum_sum[w_len] - cum_sum[matched_rows]
+            # mean_right = sum_right / (w_len - matched_rows)
 
-            d = ((matched_rows * (w_len - matched_rows)) / w_len) * (swd_vectorized(pd.DataFrame(mean_left), pd.DataFrame(mean_right))**2)
+            # Segment 2
+            matrix_right = Y_window.iloc[matched_rows:w_len, :]
+
+            d = ((matched_rows * (w_len - matched_rows)) / w_len) * (swd_vectorized(pd.DataFrame(matrix_left), pd.DataFrame(matrix_right))**2)
 
             if d > max_d:
                 max_d = d
@@ -207,17 +174,17 @@ class MeanShiftChangePointDetectorDist:
         end_z = Y_data.iloc[last_match_index, 0]
         
         # Bound slices and compute the target segment mean
-        segment_matrix = Y_data.iloc[first_match_index:last_match_index + 1, 1:].to_numpy() # Ensured last row is included if needed
-        mean_seg_np = np.mean(segment_matrix, axis=0).reshape(1, segment_matrix.shape[1])
+        segment_matrix_np = Y_data.iloc[first_match_index:last_match_index + 1, 1:].to_numpy() # Ensured last row is included if needed
+        # mean_seg_np = np.mean(segment_matrix, axis=0).reshape(1, segment_matrix.shape[1])
 
         swd_distances_all = 0
         for i in range(num_z):
             if unique_z[i] >= start_z and unique_z[i] <= end_z:
                 # Pull precomputed mean for this specific redshift directly out of a numpy array
-                select_mean_seg_np = precomputed_means[i].reshape(1, segment_matrix.shape[1])
+                select_mean_seg_np = precomputed_means[i].reshape(1, segment_matrix_np.shape[1])
                 
                 # Vectorized SWD calculation
-                swd_distances = swd_vectorized(select_mean_seg_np, mean_seg_np, n_projections, p=1, seed=seed)
+                swd_distances = swd_vectorized(select_mean_seg_np, segment_matrix_np, n_projections, p=1, seed=seed)
                 swd_distances_all += (w * (swd_distances ** 2))
         return np.sum(swd_distances_all)
 
