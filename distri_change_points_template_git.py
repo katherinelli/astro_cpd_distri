@@ -129,11 +129,11 @@ class MeanShiftChangePointDetectorDist:
             matrix_right = Y_window.iloc[matched_rows:w_len, :]
 
             d = ((matched_rows * (w_len - matched_rows)) / w_len) * (swd_vectorized(pd.DataFrame(matrix_left), pd.DataFrame(matrix_right))**2)
-
+            # print(d)
             if d > max_d:
                 max_d = d
                 best_tau = tau
-
+            print(tau)
         return best_tau, max_d
     
     def _get_candidates_dist(self, Y):
@@ -160,12 +160,12 @@ class MeanShiftChangePointDetectorDist:
         return sorted(list(candidates))
 
     
-    def _compute_segment_cost_dist_fast(self, Y_data, precomputed_means, first_matches, last_matches, start, end, w=1, n_projections=100, seed=None):
+    def _compute_segment_cost_dist_fast(self, Y_data, first_matches, last_matches, start, end, w=1, n_projections=100, seed=None):
         """
         Truly optimized segment cost using precomputed lookups and avoiding Pandas filters.
         """
-        num_z = len(precomputed_means)
         unique_z = Y_data.iloc[:, 0].unique().tolist()
+        num_z = len(unique_z)
         
         # Get boundary indices using precomputed lookups
         first_match_index = first_matches[start]
@@ -181,10 +181,11 @@ class MeanShiftChangePointDetectorDist:
         for i in range(num_z):
             if unique_z[i] >= start_z and unique_z[i] <= end_z:
                 # Pull precomputed mean for this specific redshift directly out of a numpy array
-                select_mean_seg_np = precomputed_means[i].reshape(1, segment_matrix_np.shape[1])
+                select_ind_seg_np = Y_data[Y_data.iloc[:, 0] == unique_z[i]]
+                # select_mean_seg_np = precomputed_means[i].reshape(1, segment_matrix_np.shape[1])
                 
                 # Vectorized SWD calculation
-                swd_distances = swd_vectorized(select_mean_seg_np, segment_matrix_np, n_projections, p=1, seed=seed)
+                swd_distances = swd_vectorized(select_ind_seg_np, segment_matrix_np, n_projections, p=1, seed=seed)
                 swd_distances_all += (w * (swd_distances ** 2))
         return np.sum(swd_distances_all)
 
@@ -206,13 +207,13 @@ class MeanShiftChangePointDetectorDist:
         rev_z_series = z_series[::-1]
         last_matches = {i: (rev_z_series == unique_z[i]).idxmax() for i in range(num_z)}
         
-        # 3. PRECOMPUTE MEANS: Compute every unique redshift mean group exactly ONCE
-        precomputed_means = []
-        for select_z in unique_z:
-            # Extract rows matching this redshift efficiently
-            mask = (z_series == select_z).to_numpy()
-            precomputed_means.append(np.mean(Y_data_np[mask], axis=0))
-        precomputed_means = np.array(precomputed_means)
+        # # 3. PRECOMPUTE MEANS: Compute every unique redshift mean group exactly ONCE
+        # precomputed_means = []
+        # for select_z in unique_z:
+        #     # Extract rows matching this redshift efficiently
+        #     mask = (z_series == select_z).to_numpy()
+        #     precomputed_means.append(np.mean(Y_data_np[mask], axis=0))
+        # precomputed_means = np.array(precomputed_means)
 
         # Form grid of boundaries
         grid = [0] + candidates + [num_z - 1]
@@ -224,8 +225,11 @@ class MeanShiftChangePointDetectorDist:
             for j in range(i + 1, K):
                 if grid[j] - grid[i] >= self.min_len:
                     # Pass precomputed NumPy arrays and lookups directly
+                    # cost_matrix[i, j] = self._compute_segment_cost_dist_fast(
+                    #     Y, precomputed_means, first_matches, last_matches, grid[i], grid[j]
+                    # )
                     cost_matrix[i, j] = self._compute_segment_cost_dist_fast(
-                        Y, precomputed_means, first_matches, last_matches, grid[i], grid[j]
+                        Y, first_matches, last_matches, grid[i], grid[j]
                     )
 
         # Dynamic Programming array for minimum Information Criterion
