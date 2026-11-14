@@ -181,7 +181,7 @@ class MeanShiftChangePointDetectorDist:
         for i in range(num_z):
             if unique_z[i] >= start_z and unique_z[i] <= end_z:
                 # Pull precomputed mean for this specific redshift directly out of a numpy array
-                select_ind_seg_np = Y_data[Y_data.iloc[:, 0] == unique_z[i], Y_data.columns[1:]]
+                select_ind_seg_np = Y_data[Y_data.iloc[:, 0] == unique_z[i]].iloc[:, 1:]
                 # select_mean_seg_np = precomputed_means[i].reshape(1, segment_matrix_np.shape[1])
                 
                 # Vectorized SWD calculation
