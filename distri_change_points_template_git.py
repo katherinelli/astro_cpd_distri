@@ -17,6 +17,76 @@ def omega_hat_dist(data):
         omega_cands.append((data_adj_diff_med/(math.sqrt(2)*0.6745))**2)
     return statistics.median(omega_cands)
 
+def make_swd_fn(n_samples1, n_samples2, n_features, n_projections=100, p=1, seed=None):
+    """
+    Pre-computes projections and interpolation weights once, returning a fast
+    standalone function `swd_fn(matrix1, matrix2)` for repeated calls.
+    """
+    # 1. Pre-compute unit projection vectors: shape (n_features, n_projections)
+    if n_features == 2:
+        # Uniform angles on [0, pi) are exact & faster for 2D
+        angles = np.linspace(0, np.pi, n_projections, endpoint=False, dtype=np.float32)
+        projections = np.vstack([np.cos(angles), np.sin(angles)])
+    else:
+        rng = np.random.default_rng(seed)
+        projections = rng.standard_normal((n_features, n_projections), dtype=np.float32)
+        projections /= np.linalg.norm(projections, axis=0, keepdims=True)
+
+    # 2. Pre-compute midpoint quantile interpolation indices & weights ONCE
+    needs_interp = (n_samples1 != n_samples2)
+    if needs_interp:
+        src_len = min(n_samples1, n_samples2)
+        tgt_len = max(n_samples1, n_samples2)
+        
+        q_small = (np.arange(src_len, dtype=np.float32) + 0.5) / src_len
+        q_large = (np.arange(tgt_len, dtype=np.float32) + 0.5) / tgt_len
+        
+        idx_high = np.clip(np.searchsorted(q_small, q_large), 1, src_len - 1)
+        idx_low = idx_high - 1
+        
+        w_high = np.clip((q_large - q_small[idx_low]) / (q_small[idx_high] - q_small[idx_low]), 0.0, 1.0)
+        w_low = 1.0 - w_high
+
+    # 3. Return the fast inner function to call inside your loop
+    def compute_swd(matrix1, matrix2):
+        m1 = np.ascontiguousarray(matrix1, dtype=np.float32)
+        m2 = np.ascontiguousarray(matrix2, dtype=np.float32)
+
+        # Project & sort along contiguous rows: shape (n_projections, n_samples)
+        p1 = np.sort((m1 @ projections).T, axis=1)
+        p2 = np.sort((m2 @ projections).T, axis=1)
+
+        # Resample ONLY the smaller array using pre-computed weights
+        if needs_interp:
+            if n_samples1 < n_samples2:
+                p1 = p1[:, idx_low] * w_low + p1[:, idx_high] * w_high
+            else:
+                p2 = p2[:, idx_low] * w_low + p2[:, idx_high] * w_high
+
+        diff = np.abs(p1 - p2)
+        if p == 1:
+            return float(np.mean(diff))
+        elif p == 2:
+            return float(np.sqrt(np.mean(diff * diff)))
+        return float(np.mean(diff ** p) ** (1.0 / p))
+
+    return compute_swd
+
+def swd_cached(matrix1, matrix2, swd_dict, n_projections=100, p=1, seed=None):
+    n1, d1 = matrix1.shape
+    n2, d2 = matrix2.shape
+    if d1 != d2:
+        raise ValueError(f"Feature dimensions must match: {d1} vs {d2}")
+
+    # Key uniquely identifies the shapes and hyperparameters
+    key = (n1, n2, d1, n_projections, p, seed)
+
+    # Create and store the function only if this shape combo hasn't been seen yet
+    if key not in swd_dict:
+        swd_dict[key] = make_swd_fn(n1, n2, d1, n_projections=n_projections, p=p, seed=seed)
+
+    return swd_dict[key](matrix1, matrix2)
+
 def swd_vectorized(matrix1, matrix2, n_projections=100, p=1, seed=None):
     """
     Computes the Sliced Wasserstein Distance (SWD) between two point-clouds
@@ -101,6 +171,7 @@ class MeanShiftChangePointDetectorDist:
         unique_z = Y_window['Assigned_Redshift'].unique().tolist()
         num_z = len(unique_z)
         Y_data = Y_window.iloc[:, 1:]
+        swd_cache_init = {}
 
         if num_z < 2 * self.min_len:
             return None, float('inf')
@@ -128,7 +199,8 @@ class MeanShiftChangePointDetectorDist:
             # Segment 2
             matrix_right = Y_window.iloc[matched_rows:w_len, :]
 
-            d = ((matched_rows * (w_len - matched_rows)) / w_len) * (swd_vectorized(pd.DataFrame(matrix_left), pd.DataFrame(matrix_right))**2)
+            # d = ((matched_rows * (w_len - matched_rows)) / w_len) * (swd_vectorized(pd.DataFrame(matrix_left), pd.DataFrame(matrix_right))**2)
+            d = ((matched_rows * (w_len - matched_rows)) / w_len) * (swd_cached(pd.DataFrame(matrix_left), pd.DataFrame(matrix_right), swd_cache_init, n_projections = 100, p=1)**2)
             # print(d)
             if d > max_d:
                 max_d = d
@@ -166,7 +238,9 @@ class MeanShiftChangePointDetectorDist:
         """
         unique_z = Y_data.iloc[:, 0].unique().tolist()
         num_z = len(unique_z)
+        seg_Y_np = Y_data.iloc[:, 1:].to_numpy()
 
+        swd_cache = {}
         swd_distances_all = 0
         for i in range(num_z):
                 # Pull precomputed mean for this specific redshift directly out of a numpy array
@@ -174,7 +248,8 @@ class MeanShiftChangePointDetectorDist:
             # select_mean_seg_np = precomputed_means[i].reshape(1, segment_matrix_np.shape[1])
             
             # Vectorized SWD calculation
-            swd_distances = swd_vectorized(select_ind_seg_np, Y_data.iloc[:, 1:].to_numpy(), n_projections, p=1, seed=seed)
+            # swd_distances = swd_vectorized(select_ind_seg_np, Y_data.iloc[:, 1:].to_numpy(), n_projections, p=1, seed=seed)
+            swd_distances = swd_cached(select_ind_seg_np, seg_Y_np, swd_cache, n_projections, p=1)
             swd_distances_all += (w * (swd_distances ** 2))
         return np.sum(swd_distances_all)
 
@@ -212,7 +287,7 @@ class MeanShiftChangePointDetectorDist:
                     first_match_index = first_matches[start]
                     last_match_index = last_matches[end]
                     seg_Y = Y.iloc[first_match_index:last_match_index + 1, :]
-                    cost_matrix[i, j] = self._compute_segment_cost_dist_fast(seg_Y, n_projections = 10)
+                    cost_matrix[i, j] = self._compute_segment_cost_dist_fast(seg_Y, n_projections = 100)
 
         # Dynamic Programming array for minimum Information Criterion
         dp = np.full(K, float('inf'))
