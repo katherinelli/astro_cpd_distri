@@ -160,43 +160,32 @@ class MeanShiftChangePointDetectorDist:
         return sorted(list(candidates))
 
     
-    def _compute_segment_cost_dist_fast(self, Y_data, first_matches, last_matches, start, end, w=1, n_projections=100, seed=None):
+    def _compute_segment_cost_dist_fast(self, Y_data, w=1, n_projections=100, seed=None):
         """
         Truly optimized segment cost using precomputed lookups and avoiding Pandas filters.
         """
         unique_z = Y_data.iloc[:, 0].unique().tolist()
         num_z = len(unique_z)
-        
-        # Get boundary indices using precomputed lookups
-        first_match_index = first_matches[start]
-        last_match_index = last_matches[end]
-        start_z = Y_data.iloc[first_match_index, 0]
-        end_z = Y_data.iloc[last_match_index, 0]
-        
-        # Bound slices and compute the target segment mean
-        segment_matrix_np = Y_data.iloc[first_match_index:last_match_index + 1, 1:].to_numpy() # Ensured last row is included if needed
-        # mean_seg_np = np.mean(segment_matrix, axis=0).reshape(1, segment_matrix.shape[1])
 
         swd_distances_all = 0
         for i in range(num_z):
-            if unique_z[i] >= start_z and unique_z[i] <= end_z:
                 # Pull precomputed mean for this specific redshift directly out of a numpy array
-                select_ind_seg_np = Y_data[Y_data.iloc[:, 0] == unique_z[i]].iloc[:, 1:]
-                # select_mean_seg_np = precomputed_means[i].reshape(1, segment_matrix_np.shape[1])
-                
-                # Vectorized SWD calculation
-                swd_distances = swd_vectorized(select_ind_seg_np, segment_matrix_np, n_projections, p=1, seed=seed)
-                swd_distances_all += (w * (swd_distances ** 2))
+            select_ind_seg_np = Y_data[Y_data.iloc[:, 0] == unique_z[i]].iloc[:, 1:]
+            # select_mean_seg_np = precomputed_means[i].reshape(1, segment_matrix_np.shape[1])
+            
+            # Vectorized SWD calculation
+            swd_distances = swd_vectorized(select_ind_seg_np, Y_data.iloc[:, 1:].to_numpy(), n_projections, p=1, seed=seed)
+            swd_distances_all += (w * (swd_distances ** 2))
         return np.sum(swd_distances_all)
 
     def _ic_screening_dist(self, Y, candidates):
         """
         Step 2: Information Criterion Screening with Precomputed Static Data.
         """
-        n, p = Y.shape
+        # n, p = Y.shape 
         
         # 1. Extract values to pure NumPy immediately
-        Y_data_np = Y.iloc[:, 1:].to_numpy()
+        # Y_data_np = Y.iloc[:, 1:].to_numpy()
         z_series = Y['Assigned_Redshift']
         unique_z = z_series.unique().tolist()
         num_z = len(unique_z)
@@ -206,31 +195,24 @@ class MeanShiftChangePointDetectorDist:
         # Reverse lookup for last match mapping
         rev_z_series = z_series[::-1]
         last_matches = {i: (rev_z_series == unique_z[i]).idxmax() for i in range(num_z)}
-        
-        # # 3. PRECOMPUTE MEANS: Compute every unique redshift mean group exactly ONCE
-        # precomputed_means = []
-        # for select_z in unique_z:
-        #     # Extract rows matching this redshift efficiently
-        #     mask = (z_series == select_z).to_numpy()
-        #     precomputed_means.append(np.mean(Y_data_np[mask], axis=0))
-        # precomputed_means = np.array(precomputed_means)
 
         # Form grid of boundaries
         grid = [0] + candidates + [num_z - 1]
         K = len(grid)
-
+        print(K)
         # Precompute segment cost matrix
         cost_matrix = np.full((K, K), float('inf'))
         for i in range(K):
+            print(i)
             for j in range(i + 1, K):
+                print(j)
                 if grid[j] - grid[i] >= self.min_len:
-                    # Pass precomputed NumPy arrays and lookups directly
-                    # cost_matrix[i, j] = self._compute_segment_cost_dist_fast(
-                    #     Y, precomputed_means, first_matches, last_matches, grid[i], grid[j]
-                    # )
-                    cost_matrix[i, j] = self._compute_segment_cost_dist_fast(
-                        Y, first_matches, last_matches, grid[i], grid[j]
-                    )
+                    start = grid[i]
+                    end = grid[j]
+                    first_match_index = first_matches[start]
+                    last_match_index = last_matches[end]
+                    seg_Y = Y.iloc[first_match_index:last_match_index + 1, :]
+                    cost_matrix[i, j] = self._compute_segment_cost_dist_fast(seg_Y, n_projections = 10)
 
         # Dynamic Programming array for minimum Information Criterion
         dp = np.full(K, float('inf'))
